@@ -14,7 +14,9 @@ type ProxyConfig struct {
 	TargetPort int
 }
 
-const proxyTemplate = `server {
+const proxyTemplate = `# managed-by: nginx-manager-service
+
+server {
     listen 80;
     server_name {{.Domain}};
 
@@ -38,19 +40,18 @@ func GenerateProxyConfig(config ProxyConfig) ([]byte, error) {
 	var content bytes.Buffer
 
 	if err := tmpl.Execute(&content, config); err != nil {
-		return nil, fmt.Errorf(
-			"generate nginx config: %w",
-			err,
-		)
+		return nil, fmt.Errorf("generate nginx config: %w", err)
 	}
 
 	return content.Bytes(), nil
 }
 
 func ConfigPath(configDir string, domain string) string {
+	filename := "nginx-manager--" + domain + ".conf"
+
 	return filepath.Join(
 		configDir,
-		domain+".conf",
+		filename,
 	)
 }
 
@@ -58,10 +59,7 @@ func WriteFileAtomic(path string, content []byte) error {
 	dir := filepath.Dir(path)
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf(
-			"create config directory: %w",
-			err,
-		)
+		return fmt.Errorf("create config directory: %w", err)
 	}
 
 	tempFile, err := os.CreateTemp(
@@ -70,10 +68,7 @@ func WriteFileAtomic(path string, content []byte) error {
 	)
 
 	if err != nil {
-		return fmt.Errorf(
-			"create temporary config: %w",
-			err,
-		)
+		return fmt.Errorf("create temporary config: %w", err)
 	}
 
 	tempPath := tempFile.Name()
@@ -82,34 +77,20 @@ func WriteFileAtomic(path string, content []byte) error {
 
 	if _, err := tempFile.Write(content); err != nil {
 		tempFile.Close()
-
-		return fmt.Errorf(
-			"write temporary config: %w",
-			err,
-		)
+		return fmt.Errorf("write temporary config: %w", err)
 	}
 
 	if err := tempFile.Chmod(0644); err != nil {
 		tempFile.Close()
-
-		return fmt.Errorf(
-			"chmod config: %w",
-			err,
-		)
+		return fmt.Errorf("chmod config: %w", err)
 	}
 
 	if err := tempFile.Close(); err != nil {
-		return fmt.Errorf(
-			"close temporary config: %w",
-			err,
-		)
+		return fmt.Errorf("close temporary config: %w", err)
 	}
 
 	if err := os.Rename(tempPath, path); err != nil {
-		return fmt.Errorf(
-			"activate config: %w",
-			err,
-		)
+		return fmt.Errorf("activate config: %w", err)
 	}
 
 	return nil

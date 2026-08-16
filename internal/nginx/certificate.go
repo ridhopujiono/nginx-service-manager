@@ -166,3 +166,101 @@ func IssueCertificate(domain string) error {
 
 	return nil
 }
+
+func RenewCertificate(domain string) error {
+	mutationMu.Lock()
+	defer mutationMu.Unlock()
+
+	if !CertificateExists(domain) {
+		return fmt.Errorf(
+			"certificate for %s does not exist",
+			domain,
+		)
+	}
+
+	mode := os.Getenv("CERTIFICATE_MODE")
+
+	if mode != "certbot" {
+		return fmt.Errorf(
+			"certificate renewal is disabled",
+		)
+	}
+
+	binary := os.Getenv("CERTBOT_BINARY")
+
+	if binary == "" {
+		binary = "/usr/bin/certbot"
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		5*time.Minute,
+	)
+
+	defer cancel()
+
+	cmd := exec.CommandContext(
+		ctx,
+		binary,
+		"renew",
+		"--cert-name",
+		domain,
+		"--non-interactive",
+	)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf(
+				"certificate renewal timed out",
+			)
+		}
+
+		output := strings.TrimSpace(
+			stderr.String(),
+		)
+
+		if output == "" {
+			output = strings.TrimSpace(
+				stdout.String(),
+			)
+		}
+
+		return fmt.Errorf(
+			"certbot renewal failed: %s",
+			output,
+		)
+	}
+
+	/*
+		Certbot selesai.
+
+		Certificate bisa:
+		- baru diperbarui
+		- atau belum perlu diperbarui
+
+		Keduanya dianggap sukses.
+	*/
+
+	if err := TestConfig(); err != nil {
+		return fmt.Errorf(
+			"nginx config invalid after certificate renewal: %w",
+			err,
+		)
+	}
+
+	if err := Reload(); err != nil {
+		return fmt.Errorf(
+			"nginx reload failed after certificate renewal: %w",
+			err,
+		)
+	}
+
+	return nil
+}

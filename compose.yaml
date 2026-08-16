@@ -17,6 +17,7 @@ services:
       NGINX_CONFIG_DIR: "/etc/nginx/conf.d"
       NGINX_BINARY: "/usr/sbin/nginx"
       NGINX_TEST_CONFIG: "/app/dev/nginx/validator.conf"
+      NGINX_RELOAD_MODE: "noop"
 
     ports:
       - "9001:9001"

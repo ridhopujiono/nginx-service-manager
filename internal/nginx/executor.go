@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 func TestConfig() error {
@@ -16,21 +17,17 @@ func TestConfig() error {
 
 	testConfig := os.Getenv("NGINX_TEST_CONFIG")
 
-	var cmd *exec.Cmd
+	args := []string{"-t"}
 
 	if testConfig != "" {
-		cmd = exec.Command(
-			binary,
-			"-t",
+		args = append(
+			args,
 			"-c",
 			testConfig,
 		)
-	} else {
-		cmd = exec.Command(
-			binary,
-			"-t",
-		)
 	}
+
+	cmd := exec.Command(binary, args...)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -39,9 +36,15 @@ func TestConfig() error {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		output := strings.TrimSpace(stderr.String())
+
+		if output == "" {
+			output = strings.TrimSpace(stdout.String())
+		}
+
 		return fmt.Errorf(
 			"nginx config test failed: %s",
-			stderr.String(),
+			output,
 		)
 	}
 

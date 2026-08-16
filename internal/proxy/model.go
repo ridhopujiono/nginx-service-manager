@@ -4,6 +4,7 @@ type CreateProxyRequest struct {
 	Domain     string `json:"domain"`
 	TargetHost string `json:"target_host"`
 	TargetPort int    `json:"target_port"`
+	SSL        bool   `json:"ssl"`
 }
 
 type Proxy struct {
@@ -11,5 +12,6 @@ type Proxy struct {
 	Domain     string `json:"domain"`
 	TargetHost string `json:"target_host"`
 	TargetPort int    `json:"target_port"`
+	SSL        bool   `json:"ssl"`
 	ConfigFile string `json:"config_file"`
 }

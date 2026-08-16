@@ -59,6 +59,7 @@ func CreateHandler(w http.ResponseWriter, r *http.Request) {
 			Domain:     req.Domain,
 			TargetHost: req.TargetHost,
 			TargetPort: req.TargetPort,
+			SSL:        req.SSL,
 		},
 	)
 
@@ -79,6 +80,7 @@ func CreateHandler(w http.ResponseWriter, r *http.Request) {
 		Domain:     req.Domain,
 		TargetHost: req.TargetHost,
 		TargetPort: req.TargetPort,
+		SSL:        req.SSL,
 		ConfigFile: configPath,
 	}
 

@@ -3,12 +3,18 @@ package nginx
 import (
 	"fmt"
 	"os"
+	"sync"
 )
+
+var mutationMu sync.Mutex
 
 func CreateOrUpdateProxy(
 	configDir string,
 	config ProxyConfig,
 ) (string, error) {
+
+	mutationMu.Lock()
+	defer mutationMu.Unlock()
 
 	if configDir == "" {
 		return "", fmt.Errorf(
@@ -16,9 +22,15 @@ func CreateOrUpdateProxy(
 		)
 	}
 
-	content, err := GenerateProxyConfig(config)
-	if err != nil {
-		return "", err
+	if config.ACMEWebroot == "" {
+		config.ACMEWebroot = os.Getenv(
+			"ACME_WEBROOT",
+		)
+
+		if config.ACMEWebroot == "" {
+			config.ACMEWebroot =
+				"/var/lib/nginx-manager/acme"
+		}
 	}
 
 	path := ConfigPath(
@@ -27,8 +39,7 @@ func CreateOrUpdateProxy(
 	)
 
 	/*
-		Simpan kondisi config sebelumnya
-		untuk rollback.
+		Simpan kondisi sebelumnya.
 	*/
 
 	var oldContent []byte
@@ -47,97 +58,206 @@ func CreateOrUpdateProxy(
 	}
 
 	/*
-		Tulis config baru.
+		Tidak menggunakan SSL.
+		Cukup generate HTTP.
 	*/
+
+	if !config.SSL {
+		content, err :=
+			GenerateHTTPProxyConfig(config)
+
+		if err != nil {
+			return "", err
+		}
+
+		if err := applyConfig(
+			path,
+			content,
+		); err != nil {
+
+			return "", rollbackAfterFailure(
+				err,
+				path,
+				hadOldConfig,
+				oldContent,
+			)
+		}
+
+		return path, nil
+	}
+
+	/*
+		SSL requested.
+
+		Kalau certificate sudah ada,
+		tidak perlu request Let's Encrypt lagi.
+	*/
+
+	if CertificateExists(config.Domain) {
+		content, err :=
+			GenerateHTTPSProxyConfig(config)
+
+		if err != nil {
+			return "", err
+		}
+
+		if err := applyConfig(
+			path,
+			content,
+		); err != nil {
+
+			return "", rollbackAfterFailure(
+				err,
+				path,
+				hadOldConfig,
+				oldContent,
+			)
+		}
+
+		return path, nil
+	}
+
+	/*
+		Certificate belum ada.
+
+		Tahap 1:
+		install HTTP bootstrap config
+		supaya ACME challenge bisa diakses.
+	*/
+
+	httpContent, err :=
+		GenerateHTTPProxyConfig(config)
+
+	if err != nil {
+		return "", err
+	}
+
+	if err := applyConfig(
+		path,
+		httpContent,
+	); err != nil {
+
+		return "", rollbackAfterFailure(
+			err,
+			path,
+			hadOldConfig,
+			oldContent,
+		)
+	}
+
+	/*
+		Tahap 2:
+		Request Let's Encrypt certificate.
+	*/
+
+	if err := IssueCertificate(
+		config.Domain,
+	); err != nil {
+
+		return "", rollbackAfterFailure(
+			err,
+			path,
+			hadOldConfig,
+			oldContent,
+		)
+	}
+
+	/*
+		Tahap 3:
+		Certificate sudah tersedia.
+
+		Generate HTTPS config.
+	*/
+
+	httpsContent, err :=
+		GenerateHTTPSProxyConfig(config)
+
+	if err != nil {
+		return "", rollbackAfterFailure(
+			err,
+			path,
+			hadOldConfig,
+			oldContent,
+		)
+	}
+
+	if err := applyConfig(
+		path,
+		httpsContent,
+	); err != nil {
+
+		return "", rollbackAfterFailure(
+			err,
+			path,
+			hadOldConfig,
+			oldContent,
+		)
+	}
+
+	return path, nil
+}
+
+func applyConfig(
+	path string,
+	content []byte,
+) error {
 
 	if err := WriteFileAtomic(
 		path,
 		content,
 	); err != nil {
-		return "", err
-	}
 
-	/*
-		Test config sebelum reload.
-	*/
+		return err
+	}
 
 	if err := TestConfig(); err != nil {
-
-		rollbackErr := rollbackConfig(
-			path,
-			hadOldConfig,
-			oldContent,
-		)
-
-		if rollbackErr != nil {
-			return "", fmt.Errorf(
-				"%v; rollback failed: %w",
-				err,
-				rollbackErr,
-			)
-		}
-
-		return "", err
+		return err
 	}
-
-	/*
-		Config valid.
-		Sekarang reload nginx.
-	*/
 
 	if err := Reload(); err != nil {
-
-		/*
-			Kalau reload gagal,
-			kembalikan file sebelumnya.
-		*/
-
-		rollbackErr := rollbackConfig(
-			path,
-			hadOldConfig,
-			oldContent,
-		)
-
-		if rollbackErr != nil {
-			return "", fmt.Errorf(
-				"%v; rollback failed: %w",
-				err,
-				rollbackErr,
-			)
-		}
-
-		/*
-			Pastikan config hasil rollback
-			masih valid.
-		*/
-
-		if testErr := TestConfig(); testErr != nil {
-			return "", fmt.Errorf(
-				"%v; rollback config is invalid: %w",
-				err,
-				testErr,
-			)
-		}
-
-		/*
-			Coba reload ulang menggunakan
-			config yang sudah dikembalikan.
-
-			Best effort.
-		*/
-
-		if restoreReloadErr := Reload(); restoreReloadErr != nil {
-			return "", fmt.Errorf(
-				"%v; config rolled back but nginx restore reload failed: %w",
-				err,
-				restoreReloadErr,
-			)
-		}
-
-		return "", err
+		return err
 	}
 
-	return path, nil
+	return nil
+}
+
+func rollbackAfterFailure(
+	originalErr error,
+	path string,
+	hadOldConfig bool,
+	oldContent []byte,
+) error {
+
+	if err := rollbackConfig(
+		path,
+		hadOldConfig,
+		oldContent,
+	); err != nil {
+
+		return fmt.Errorf(
+			"%v; rollback failed: %w",
+			originalErr,
+			err,
+		)
+	}
+
+	if err := TestConfig(); err != nil {
+		return fmt.Errorf(
+			"%v; rollback config invalid: %w",
+			originalErr,
+			err,
+		)
+	}
+
+	if err := Reload(); err != nil {
+		return fmt.Errorf(
+			"%v; config rolled back but reload failed: %w",
+			originalErr,
+			err,
+		)
+	}
+
+	return originalErr
 }
 
 func rollbackConfig(
@@ -147,26 +267,11 @@ func rollbackConfig(
 ) error {
 
 	if hadOldConfig {
-		if err := WriteFileAtomic(
+		return WriteFileAtomic(
 			path,
 			oldContent,
-		); err != nil {
-
-			return fmt.Errorf(
-				"restore old config: %w",
-				err,
-			)
-		}
-
-		return nil
+		)
 	}
-
-	/*
-		Kalau config sebelumnya tidak ada,
-		berarti ini CREATE baru.
-
-		Rollback = hapus.
-	*/
 
 	if err := os.Remove(path); err != nil &&
 		!os.IsNotExist(err) {

@@ -1,0 +1,56 @@
+services:
+  nginx-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+
+    container_name: nginx-manager-dev
+
+    working_dir: /app
+
+    volumes:
+      - .:/app
+      - ./dev/nginx/conf.d:/etc/nginx/conf.d
+
+    environment:
+      LISTEN_ADDR: "0.0.0.0:9001"
+      NGINX_CONFIG_DIR: "/etc/nginx/conf.d"
+      NGINX_BINARY: "/usr/sbin/nginx"
+      NGINX_TEST_CONFIG: "/app/dev/nginx/validator.conf"
+
+    ports:
+      - "9001:9001"
+
+    networks:
+      - nginx-manager-network
+  nginx:
+    image: nginx:alpine
+
+    container_name: nginx-dev
+
+    ports:
+      - "8080:80"
+
+    volumes:
+      - ./dev/nginx/conf.d:/etc/nginx/conf.d:ro
+
+    depends_on:
+      - dummy-app
+
+    networks:
+      - nginx-manager-network
+
+  dummy-app:
+    image: nginx:alpine
+
+    container_name: nginx-dummy-app
+
+    volumes:
+      - ./dev/dummy:/usr/share/nginx/html:ro
+
+    networks:
+      - nginx-manager-network
+
+networks:
+  nginx-manager-network:
+    driver: bridge

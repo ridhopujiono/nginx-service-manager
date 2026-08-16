@@ -1,0 +1,11 @@
+FROM golang:alpine
+
+RUN apk add --no-cache nginx
+
+WORKDIR /app
+
+COPY go.mod ./
+
+RUN go mod download
+
+CMD ["go", "run", "./cmd/server"]

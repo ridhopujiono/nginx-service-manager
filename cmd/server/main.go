@@ -5,11 +5,16 @@ import (
 	"net/http"
 	"os"
 
+	"nginx-manager-service/internal/middleware"
 	"nginx-manager-service/internal/proxy"
 )
 
 func main() {
 	mux := http.NewServeMux()
+
+	/*
+		Public endpoint.
+	*/
 
 	mux.HandleFunc(
 		"GET /health",
@@ -17,7 +22,6 @@ func main() {
 			w http.ResponseWriter,
 			r *http.Request,
 		) {
-
 			w.Header().Set(
 				"Content-Type",
 				"application/json",
@@ -33,19 +37,30 @@ func main() {
 		},
 	)
 
-	mux.HandleFunc(
+	/*
+		Protected API.
+	*/
+
+	apiMux := http.NewServeMux()
+
+	apiMux.HandleFunc(
 		"POST /api/v1/proxies",
 		proxy.CreateHandler,
 	)
 
-	mux.HandleFunc(
+	apiMux.HandleFunc(
 		"GET /api/v1/proxies",
 		proxy.ListHandler,
 	)
 
-	mux.HandleFunc(
+	apiMux.HandleFunc(
 		"DELETE /api/v1/proxies/{domain}",
 		proxy.DeleteHandler,
+	)
+
+	mux.Handle(
+		"/api/v1/",
+		middleware.BearerAuth(apiMux),
 	)
 
 	addr := os.Getenv("LISTEN_ADDR")
@@ -63,7 +78,6 @@ func main() {
 		addr,
 		mux,
 	); err != nil {
-
 		log.Fatal(err)
 	}
 }

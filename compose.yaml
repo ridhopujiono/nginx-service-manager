@@ -11,6 +11,7 @@ services:
     volumes:
       - .:/app
       - ./dev/nginx/conf.d:/etc/nginx/conf.d
+      - ./dev/acme:/var/lib/nginx-manager/acme
 
     environment:
       LISTEN_ADDR: "0.0.0.0:9001"
@@ -18,6 +19,9 @@ services:
       NGINX_BINARY: "/usr/sbin/nginx"
       NGINX_TEST_CONFIG: "/app/dev/nginx/validator.conf"
       NGINX_RELOAD_MODE: "noop"
+      API_TOKEN: "dev-secret-change-me"
+      ACME_WEBROOT: "/var/lib/nginx-manager/acme"
+      CERTIFICATE_MODE: "disabled"
 
     ports:
       - "9001:9001"
@@ -34,6 +38,7 @@ services:
 
     volumes:
       - ./dev/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./dev/acme:/var/lib/nginx-manager/acme:ro
 
     depends_on:
       - dummy-app

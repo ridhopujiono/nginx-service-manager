@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -17,27 +18,40 @@ var hostnameRegex = regexp.MustCompile(
 )
 
 func CreateHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	var req CreateProxyRequest
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(&req); err != nil {
+		http.Error(
+			w,
+			"invalid JSON",
+			http.StatusBadRequest,
+		)
 		return
 	}
 
-	req.Domain = strings.ToLower(strings.TrimSpace(req.Domain))
-	req.TargetHost = strings.TrimSpace(req.TargetHost)
+	req.Domain = strings.ToLower(
+		strings.TrimSpace(req.Domain),
+	)
+
+	req.TargetHost = strings.TrimSpace(
+		req.TargetHost,
+	)
 
 	if err := validate(req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(
+			w,
+			err.Error(),
+			http.StatusBadRequest,
+		)
 		return
 	}
 
-	configDir := os.Getenv("NGINX_CONFIG_DIR")
+	configDir := os.Getenv(
+		"NGINX_CONFIG_DIR",
+	)
 
 	configPath, err := nginxconfig.CreateOrUpdateProxy(
 		configDir,
@@ -51,13 +65,16 @@ func CreateHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(
 			w,
-			fmt.Sprintf("failed to generate nginx config: %v", err),
+			fmt.Sprintf(
+				"failed to apply nginx config: %v",
+				err,
+			),
 			http.StatusInternalServerError,
 		)
 		return
 	}
 
-	proxy := Proxy{
+	result := Proxy{
 		ID:         req.Domain,
 		Domain:     req.Domain,
 		TargetHost: req.TargetHost,
@@ -65,32 +82,168 @@ func CreateHandler(w http.ResponseWriter, r *http.Request) {
 		ConfigFile: configPath,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-
-	json.NewEncoder(w).Encode(proxy)
+	writeJSON(
+		w,
+		http.StatusCreated,
+		result,
+	)
 }
 
-func validate(req CreateProxyRequest) error {
-	if req.Domain == "" {
-		return &ValidationError{"domain is required"}
+func ListHandler(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+
+	configDir := os.Getenv(
+		"NGINX_CONFIG_DIR",
+	)
+
+	configs, err := nginxconfig.ListProxies(
+		configDir,
+	)
+
+	if err != nil {
+		http.Error(
+			w,
+			fmt.Sprintf(
+				"failed to list nginx proxies: %v",
+				err,
+			),
+			http.StatusInternalServerError,
+		)
+		return
 	}
 
-	if !isValidHostname(req.Domain) {
-		return &ValidationError{"domain is invalid"}
+	result := make(
+		[]Proxy,
+		0,
+		len(configs),
+	)
+
+	for _, config := range configs {
+
+		result = append(
+			result,
+			Proxy{
+				ID:         config.Domain,
+				Domain:     config.Domain,
+				TargetHost: config.TargetHost,
+				TargetPort: config.TargetPort,
+				ConfigFile: nginxconfig.ConfigPath(
+					configDir,
+					config.Domain,
+				),
+			},
+		)
+	}
+
+	writeJSON(
+		w,
+		http.StatusOK,
+		result,
+	)
+}
+
+func DeleteHandler(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+
+	domain := strings.ToLower(
+		strings.TrimSpace(
+			r.PathValue("domain"),
+		),
+	)
+
+	if domain == "" ||
+		!isValidHostname(domain) {
+
+		http.Error(
+			w,
+			"invalid domain",
+			http.StatusBadRequest,
+		)
+
+		return
+	}
+
+	configDir := os.Getenv(
+		"NGINX_CONFIG_DIR",
+	)
+
+	err := nginxconfig.DeleteProxy(
+		configDir,
+		domain,
+	)
+
+	if errors.Is(
+		err,
+		nginxconfig.ErrProxyNotFound,
+	) {
+
+		http.Error(
+			w,
+			"proxy not found",
+			http.StatusNotFound,
+		)
+
+		return
+	}
+
+	if err != nil {
+
+		http.Error(
+			w,
+			fmt.Sprintf(
+				"failed to delete proxy: %v",
+				err,
+			),
+			http.StatusInternalServerError,
+		)
+
+		return
+	}
+
+	w.WriteHeader(
+		http.StatusNoContent,
+	)
+}
+
+func validate(
+	req CreateProxyRequest,
+) error {
+
+	if req.Domain == "" {
+		return &ValidationError{
+			"domain is required",
+		}
+	}
+
+	if !isValidHostname(
+		req.Domain,
+	) {
+		return &ValidationError{
+			"domain is invalid",
+		}
 	}
 
 	if req.TargetHost == "" {
-		return &ValidationError{"target_host is required"}
+		return &ValidationError{
+			"target_host is required",
+		}
 	}
 
-	if net.ParseIP(req.TargetHost) == nil && !isValidHostname(req.TargetHost) {
+	if net.ParseIP(req.TargetHost) == nil &&
+		!isValidHostname(req.TargetHost) {
+
 		return &ValidationError{
 			"target_host must be a valid IP address or hostname",
 		}
 	}
 
-	if req.TargetPort < 1 || req.TargetPort > 65535 {
+	if req.TargetPort < 1 ||
+		req.TargetPort > 65535 {
+
 		return &ValidationError{
 			"target_port must be between 1 and 65535",
 		}
@@ -99,12 +252,35 @@ func validate(req CreateProxyRequest) error {
 	return nil
 }
 
-func isValidHostname(value string) bool {
+func isValidHostname(
+	value string,
+) bool {
+
 	if len(value) > 253 {
 		return false
 	}
 
-	return hostnameRegex.MatchString(value)
+	return hostnameRegex.MatchString(
+		value,
+	)
+}
+
+func writeJSON(
+	w http.ResponseWriter,
+	status int,
+	data any,
+) {
+
+	w.Header().Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	w.WriteHeader(status)
+
+	_ = json.NewEncoder(w).Encode(
+		data,
+	)
 }
 
 type ValidationError struct {

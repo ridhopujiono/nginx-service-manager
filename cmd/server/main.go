@@ -7,6 +7,9 @@ import (
 
 	"nginx-manager-service/internal/middleware"
 	"nginx-manager-service/internal/proxy"
+	"nginx-manager-service/internal/certificate"
+	"nginx-manager-service/internal/status"
+	"nginx-manager-service/internal/action"
 )
 
 func main() {
@@ -56,6 +59,26 @@ func main() {
 	apiMux.HandleFunc(
 		"DELETE /api/v1/proxies/{domain}",
 		proxy.DeleteHandler,
+	)
+
+	apiMux.HandleFunc(
+		"POST /api/v1/certificates/{domain}/renew",
+		certificate.RenewHandler,
+	)
+
+	apiMux.HandleFunc(
+		"GET /api/v1/status",
+		status.Handler,
+	)
+
+	apiMux.HandleFunc(
+		"POST /api/v1/actions/nginx/test",
+		action.TestNginxHandler,
+	)
+
+	apiMux.HandleFunc(
+		"POST /api/v1/actions/nginx/reload",
+		action.ReloadNginxHandler,
 	)
 
 	mux.Handle(
